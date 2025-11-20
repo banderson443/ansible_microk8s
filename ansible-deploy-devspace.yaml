@@ -73,6 +73,12 @@
                   env:
                   - name: PASSWORD
                     value: "changeme123"
+                  - name: SERVICE_URL
+                    value: "https://marketplace.visualstudio.com/_apis/public/gallery"
+                  - name: ITEM_URL
+                    value: "https://marketplace.visualstudio.com/items"
+                  - name: INSTALL_EXTENSION_PACK
+                    value: "false"
                   volumeMounts:
                   - name: data
                     mountPath: /home/coder
