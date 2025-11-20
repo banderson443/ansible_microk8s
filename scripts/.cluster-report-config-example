@@ -1,0 +1,12 @@
+# MicroK8s Cluster Report Configuration
+# Copy to ~/.cluster-report-config and update with your settings
+
+# Email recipient (required)
+EMAIL_TO="banderson443@gmail.com"
+
+# SMTP configuration (optional - uses system mail if not specified)
+# SMTP_SERVER="smtp.gmail.com"
+# SMTP_PORT="587"
+
+# From address for email
+FROM_ADDRESS="cluster-admin@home.arpa"
