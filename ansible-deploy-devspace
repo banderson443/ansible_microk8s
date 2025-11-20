@@ -1,0 +1,221 @@
+---
+# ansible-deploy-devspace.yaml
+# Usage: ansible-playbook -i inventory ansible-deploy-devspace.yaml
+
+- name: Deploy code-server devspace to MicroK8s
+  hosts: k8s1.home.arpa
+  become: no
+  
+  tasks:
+    - name: Create devspace manifests directory
+      ansible.builtin.file:
+        path: /tmp/devspace-k8s
+        state: directory
+        mode: '0755'
+
+    - name: Copy namespace manifest
+      ansible.builtin.copy:
+        content: |
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: devspace
+            labels:
+              name: devspace
+        dest: /tmp/devspace-k8s/namespace.yaml
+        mode: '0644'
+
+    - name: Copy PVC manifest
+      ansible.builtin.copy:
+        content: |
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: code-server-data
+            namespace: devspace
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            storageClassName: microk8s-hostpath
+            resources:
+              requests:
+                storage: 20Gi
+        dest: /tmp/devspace-k8s/pvc.yaml
+        mode: '0644'
+
+    - name: Copy deployment manifest
+      ansible.builtin.copy:
+        content: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: code-server
+            namespace: devspace
+            labels:
+              app: code-server
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: code-server
+            template:
+              metadata:
+                labels:
+                  app: code-server
+              spec:
+                containers:
+                - name: code-server
+                  image: codercom/code-server:latest
+                  imagePullPolicy: Always
+                  ports:
+                  - containerPort: 8080
+                    name: http
+                  env:
+                  - name: PASSWORD
+                    value: "changeme123"
+                  volumeMounts:
+                  - name: data
+                    mountPath: /home/coder
+                  resources:
+                    requests:
+                      cpu: 200m
+                      memory: 512Mi
+                    limits:
+                      cpu: 2000m
+                      memory: 2Gi
+                  livenessProbe:
+                    httpGet:
+                      path: /healthz
+                      port: 8080
+                    initialDelaySeconds: 30
+                    periodSeconds: 10
+                  readinessProbe:
+                    httpGet:
+                      path: /healthz
+                      port: 8080
+                    initialDelaySeconds: 10
+                    periodSeconds: 5
+                volumes:
+                - name: data
+                  persistentVolumeClaim:
+                    claimName: code-server-data
+        dest: /tmp/devspace-k8s/deployment.yaml
+        mode: '0644'
+
+    - name: Copy service manifest
+      ansible.builtin.copy:
+        content: |
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: code-server
+            namespace: devspace
+            labels:
+              app: code-server
+          spec:
+            type: ClusterIP
+            ports:
+            - port: 8080
+              targetPort: 8080
+              protocol: TCP
+              name: http
+            selector:
+              app: code-server
+        dest: /tmp/devspace-k8s/service.yaml
+        mode: '0644'
+
+    - name: Copy ingress manifest
+      ansible.builtin.copy:
+        content: |
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: code-server-ingress
+            namespace: devspace
+            annotations:
+              cert-manager.io/cluster-issuer: "letsencrypt-microk8s"
+          spec:
+            ingressClassName: public
+            tls:
+            - hosts:
+              - code.home.arpa
+              secretName: code-server-tls
+            rules:
+            - host: code.home.arpa
+              http:
+                paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: code-server
+                      port:
+                        number: 8080
+        dest: /tmp/devspace-k8s/ingress.yaml
+        mode: '0644'
+
+    - name: Apply namespace
+      ansible.builtin.shell:
+        cmd: microk8s kubectl apply -f /tmp/devspace-k8s/namespace.yaml
+      register: namespace_result
+
+    - name: Apply PVC
+      ansible.builtin.shell:
+        cmd: microk8s kubectl apply -f /tmp/devspace-k8s/pvc.yaml
+      register: pvc_result
+
+    - name: Apply deployment
+      ansible.builtin.shell:
+        cmd: microk8s kubectl apply -f /tmp/devspace-k8s/deployment.yaml
+      register: deployment_result
+
+    - name: Apply service
+      ansible.builtin.shell:
+        cmd: microk8s kubectl apply -f /tmp/devspace-k8s/service.yaml
+      register: service_result
+
+    - name: Apply ingress
+      ansible.builtin.shell:
+        cmd: microk8s kubectl apply -f /tmp/devspace-k8s/ingress.yaml
+      register: ingress_result
+
+    - name: Display results
+      ansible.builtin.debug:
+        msg:
+          - "Namespace: {{ namespace_result.stdout }}"
+          - "PVC: {{ pvc_result.stdout }}"
+          - "Deployment: {{ deployment_result.stdout }}"
+          - "Service: {{ service_result.stdout }}"
+          - "Ingress: {{ ingress_result.stdout }}"
+
+    - name: Wait for pod to be ready
+      ansible.builtin.shell:
+        cmd: microk8s kubectl wait --for=condition=ready pod -l app=code-server -n devspace --timeout=300s
+      register: wait_result
+      ignore_errors: yes
+
+    - name: Get pod status
+      ansible.builtin.shell:
+        cmd: microk8s kubectl get pods -n devspace
+      register: pod_status
+
+    - name: Display pod status
+      ansible.builtin.debug:
+        msg: "{{ pod_status.stdout_lines }}"
+
+    - name: Display access information
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Code-server deployed successfully!"
+          - "Access at: https://code.home.arpa"
+          - "Password: changeme123"
+          - "=========================================="
+          - ""
+          - "Add to your hosts file or DNS:"
+          - "192.168.250.195  code.home.arpa"
+          - ""
+          - "To check status:"
+          - "  microk8s kubectl get all -n devspace"
+          - "To view logs:"
+          - "  microk8s kubectl logs -n devspace -l app=code-server -f"
